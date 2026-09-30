@@ -607,7 +607,7 @@ def batch_evaluate_models(
         print(f"IoU (%):          {successful_results['iou'].mean()*100:.2f} ± {successful_results['iou'].std()*100:.2f}")
         print(f"reError:          {successful_results['reconstruction_error'].mean():.2f} ± {successful_results['reconstruction_error'].std():.2f}")
         print(f"CD_l2 (mm):       {successful_results['chamfer_distance'].mean():.2f} ± {successful_results['chamfer_distance'].std():.2f}")
-        print(f"reMSE (×1e-4):    {successful_results['remse'].mean()*1e4:.2f} ± {successful_results['remse'].std()*1e4:.2f}")
+        print(f"reMSE:            {successful_results['remse'].mean():.4f} ± {successful_results['remse'].std():.4f}")
     
     if failed_evaluations > 0:
         print(f"\n❌ Failed models: {df_results[~df_results['evaluation_success']]['model_id'].tolist()}")
