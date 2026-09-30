@@ -212,27 +212,32 @@ def compute_reconstruction_error(
     return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
 
 
-def compute_remse(
-    label: np.ndarray, 
-    output: np.ndarray,
-    threshold: float = 0.5
-) -> float:
-    """
-    Computes region-based mean squared error (reMSE) over the vessel region.
+# def compute_remse(
+#     label: np.ndarray, 
+#     output: np.ndarray,
+#     threshold: float = 0.5
+# ) -> float:
+#     """
+#     Computes region-based mean squared error (reMSE) over the vessel region.
     
-    Returns MSE (not RMSE) over the union of foreground voxels,
-    matching the paper convention (reported as ×10⁻⁴).
-    """
-    label_bin = (label >= threshold).astype(np.uint8)
-    output_bin = (output >= threshold).astype(np.uint8)
+#     Returns MSE (not RMSE) over the union of foreground voxels,
+#     matching the paper convention (reported as ×10⁻⁴).
+#     """
+#     label_bin = (label >= threshold).astype(np.uint8)
+#     output_bin = (output >= threshold).astype(np.uint8)
     
-    # Union of foreground regions
-    roi_mask = (label_bin | output_bin).astype(bool)
+#     # Union of foreground regions
+#     roi_mask = (label_bin | output_bin).astype(bool)
     
-    if np.sum(roi_mask) == 0:
-        return 0.0
+#     if np.sum(roi_mask) == 0:
+#         return 0.0
     
-    return np.mean((label[roi_mask] - output[roi_mask]) ** 2)
+#     return np.mean((label[roi_mask] - output[roi_mask]) ** 2)
+
+
+def compute_remse(label: np.ndarray, output: np.ndarray) -> float:
+    """Computes voxel-wise root mean squared error (reMSE)."""
+    return np.sqrt(np.mean((label - output) ** 2))
 
 
 def compute_all_metrics(
