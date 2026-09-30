@@ -152,7 +152,14 @@ def compute_cldice(
     threshold_label: float = 0.5,
     threshold_output: float = 0.5
 ) -> float:
-    """Computes centerline Dice (clDice) for tubular structures."""
+    """
+    Computes centerline Dice (clDice) for tubular structures.
+    
+    Uses the standard formula:
+        Tprec = |Skel(V_P) ∩ V_L| / |Skel(V_P)|   (topology precision)
+        Tsens = |Skel(V_L) ∩ V_P| / |Skel(V_L)|   (topology sensitivity)
+        clDice = 2 * Tprec * Tsens / (Tprec + Tsens)
+    """
     try:
         from skimage.morphology import skeletonize
         
@@ -165,30 +172,75 @@ def compute_cldice(
         label_skel = skeletonize(label_bin).astype(np.uint8)
         output_skel = skeletonize(output_bin).astype(np.uint8)
         
-        intersection = np.sum(label_skel & output_skel)
-        union = np.sum(label_skel) + np.sum(output_skel)
+        if np.sum(output_skel) == 0 or np.sum(label_skel) == 0:
+            return 0.0
         
-        return (2 * intersection) / union if union != 0 else 0.0
+        # Topology Precision: fraction of prediction's skeleton inside GT volume
+        tprec = np.sum(output_skel & label_bin) / np.sum(output_skel)
+        
+        # Topology Sensitivity: fraction of GT's skeleton inside prediction volume
+        tsens = np.sum(label_skel & output_bin) / np.sum(label_skel)
+        
+        # clDice = harmonic mean of Tprec and Tsens
+        if tprec + tsens == 0:
+            return 0.0
+        return 2.0 * tprec * tsens / (tprec + tsens)
     except:
         return 0.0
 
 
-def compute_reconstruction_error(label: np.ndarray, output: np.ndarray) -> float:
-    """Computes reconstruction error (L1 norm) between volumes."""
-    return np.mean(np.abs(label - output))
+def compute_reconstruction_error(
+    label: np.ndarray, 
+    output: np.ndarray,
+    threshold: float = 0.5
+) -> float:
+    """
+    Computes reconstruction error (L1 norm) over the vessel region.
+    
+    Computed only over the union of foreground voxels to avoid
+    the metric being dominated by the vast empty background.
+    """
+    label_bin = (label >= threshold).astype(np.uint8)
+    output_bin = (output >= threshold).astype(np.uint8)
+    
+    # Union of foreground regions
+    roi_mask = (label_bin | output_bin).astype(bool)
+    
+    if np.sum(roi_mask) == 0:
+        return 0.0
+    
+    return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
 
 
-def compute_remse(label: np.ndarray, output: np.ndarray) -> float:
-    """Computes voxel-wise root mean squared error (reMSE)."""
-    return np.sqrt(np.mean((label - output) ** 2))
+def compute_remse(
+    label: np.ndarray, 
+    output: np.ndarray,
+    threshold: float = 0.5
+) -> float:
+    """
+    Computes region-based mean squared error (reMSE) over the vessel region.
+    
+    Returns MSE (not RMSE) over the union of foreground voxels,
+    matching the paper convention (reported as ×10⁻⁴).
+    """
+    label_bin = (label >= threshold).astype(np.uint8)
+    output_bin = (output >= threshold).astype(np.uint8)
+    
+    # Union of foreground regions
+    roi_mask = (label_bin | output_bin).astype(bool)
+    
+    if np.sum(roi_mask) == 0:
+        return 0.0
+    
+    return np.mean((label[roi_mask] - output[roi_mask]) ** 2)
 
 
 def compute_all_metrics(
     label: np.ndarray,
     output: np.ndarray,
     voxel_spacing: tuple = (0.8, 0.8, 0.8),
-    threshold_label: float = 0.8,
-    threshold_output: float = 0.8,
+    threshold_label: float = 0.5,
+    threshold_output: float = 0.5,
     apply_rotation: bool = True
 ) -> dict:
     """
@@ -274,8 +326,8 @@ def evaluate_single_model(
     gt_volume_path: str,
     recon_volume_path: str,
     voxel_spacing: tuple = (0.8, 0.8, 0.8),
-    threshold_label: float = 0.8,
-    threshold_output: float = 0.8,
+    threshold_label: float = 0.5,
+    threshold_output: float = 0.5,
     apply_rotation: bool = True
 ) -> dict:
     """
@@ -361,8 +413,8 @@ def batch_evaluate_models(
     config_path: str = "./config/CCTA.yaml",
     model_numbers: list = None,
     voxel_spacing: tuple = (0.8, 0.8, 0.8),
-    threshold_label: float = 0.8,
-    threshold_output: float = 0.8,
+    threshold_label: float = 0.5,
+    threshold_output: float = 0.5,
     apply_rotation: bool = True,
     output_dir: str = "./logs/evaluation/"
 ) -> pd.DataFrame:
@@ -545,12 +597,12 @@ def batch_evaluate_models(
         successful_results = df_results[df_results['evaluation_success'] == True]
         
         print(f"\n📊 Performance Statistics (based on {successful_evaluations} successful evaluations):")
-        print(f"Dice Score:       {successful_results['dice'].mean():.4f} ± {successful_results['dice'].std():.4f}")
-        print(f"IoU:              {successful_results['iou'].mean():.4f} ± {successful_results['iou'].std():.4f}")
-        print(f"clDice:           {successful_results['cldice'].mean():.4f} ± {successful_results['cldice'].std():.4f}")
-        print(f"Chamfer Dist:     {successful_results['chamfer_distance'].mean():.4f} ± {successful_results['chamfer_distance'].std():.4f} mm")
-        print(f"Recon Error:      {successful_results['reconstruction_error'].mean():.4f} ± {successful_results['reconstruction_error'].std():.4f}")
-        print(f"reMSE:            {successful_results['remse'].mean():.4f} ± {successful_results['remse'].std():.4f}")
+        print(f"clDice (%):       {successful_results['cldice'].mean()*100:.2f} ± {successful_results['cldice'].std()*100:.2f}")
+        print(f"Dice (%):         {successful_results['dice'].mean()*100:.2f} ± {successful_results['dice'].std()*100:.2f}")
+        print(f"IoU (%):          {successful_results['iou'].mean()*100:.2f} ± {successful_results['iou'].std()*100:.2f}")
+        print(f"reError:          {successful_results['reconstruction_error'].mean():.2f} ± {successful_results['reconstruction_error'].std():.2f}")
+        print(f"CD_l2 (mm):       {successful_results['chamfer_distance'].mean():.2f} ± {successful_results['chamfer_distance'].std():.2f}")
+        print(f"reMSE (×1e-4):    {successful_results['remse'].mean()*1e4:.2f} ± {successful_results['remse'].std()*1e4:.2f}")
     
     if failed_evaluations > 0:
         print(f"\n❌ Failed models: {df_results[~df_results['evaluation_success']]['model_id'].tolist()}")
@@ -570,9 +622,9 @@ def main():
                        help="Evaluate only a single model")
     parser.add_argument("--output-dir", default="./logs/evaluation/",
                        help="Directory to save evaluation results")
-    parser.add_argument("--threshold-gt", type=float, default=0.8,
+    parser.add_argument("--threshold-gt", type=float, default=0.5,
                        help="Binarization threshold for ground truth")
-    parser.add_argument("--threshold-pred", type=float, default=0.8,
+    parser.add_argument("--threshold-pred", type=float, default=0.5,
                        help="Binarization threshold for predictions")
     parser.add_argument("--no-rotation", action='store_true',
                        help="Skip rotation alignment")
