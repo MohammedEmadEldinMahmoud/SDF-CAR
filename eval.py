@@ -637,8 +637,8 @@ def batch_evaluate_models(
         print(f"clDice (%):       {successful_results['cldice'].mean()*100:.2f} ± {successful_results['cldice'].std()*100:.2f}")
         print(f"Dice (%):         {successful_results['dice'].mean()*100:.2f} ± {successful_results['dice'].std()*100:.2f}")
         print(f"IoU (%):          {successful_results['iou'].mean()*100:.2f} ± {successful_results['iou'].std()*100:.2f}")
-        print(f"reError:          {successful_results['reconstruction_error'].mean():.2f} ± {successful_results['reconstruction_error'].std():.2f}")
-        print(f"CD_l2 (mm):       {successful_results['chamfer_distance'].mean():.2f} ± {successful_results['chamfer_distance'].std():.2f}")
+        print(f"Recon Error:      {successful_results['reconstruction_error'].mean():.4f} ± {successful_results['reconstruction_error'].std():.4f}")
+        print(f"Chamfer Dist (mm):       {successful_results['chamfer_distance'].mean():.2f} ± {successful_results['chamfer_distance'].std():.2f}")
         print(f"reMSE (×1e-4):    {successful_results['remse'].mean()*1e4:.2f} ± {successful_results['remse'].std()*1e4:.2f}")
     
     if failed_evaluations > 0:
