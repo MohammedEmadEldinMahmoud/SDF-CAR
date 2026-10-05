@@ -8,6 +8,10 @@ from datetime import datetime
 from scipy.spatial import KDTree
 from src.config.configloading import load_config
 
+# Legend for the comments in this file:
+#   [ORIGINAL] = code kept as in eval_orig.py (the reason it was kept is given)
+#   [EDIT]     = changed or added compared with eval_orig.py (the reason is given)
+
 
 def compute_overlap_metric(
     label: np.ndarray,
@@ -146,6 +150,27 @@ def compute_iou(
     return intersection / union if union != 0 else 0.0
 
 
+# [EDIT] New helper (not in eval_orig.py).
+# Reason: the NeCA paper (Sec. 2.5), whose protocol SDF-CAR follows, removes disconnected
+# fragments smaller than 25 voxels from the reconstruction before computing any metric.
+def remove_small_components(
+    output: np.ndarray,
+    threshold: float = 0.5,
+    min_voxels: int = 25
+) -> np.ndarray:
+    """Zeroes predicted foreground components smaller than min_voxels (full connectivity)."""
+    mask = output >= threshold
+    structure = ndimage.generate_binary_structure(output.ndim, output.ndim)
+    labeled, n_components = ndimage.label(mask, structure=structure)
+    if n_components == 0:
+        return output
+    sizes = ndimage.sum(mask, labeled, index=np.arange(1, n_components + 1))
+    small_ids = np.where(sizes < min_voxels)[0] + 1
+    cleaned = output.copy()
+    cleaned[np.isin(labeled, small_ids)] = 0
+    return cleaned
+
+
 def compute_cldice(
     label: np.ndarray,
     output: np.ndarray,
@@ -175,6 +200,12 @@ def compute_cldice(
         if np.sum(output_skel) == 0 or np.sum(label_skel) == 0:
             return 0.0
         
+        # [EDIT] Standard clDice (Shit et al., 2021) replaces eval_orig.py's skeleton-vs-skeleton Dice
+        #        (2*|SkelL & SkelP| / (|SkelL| + |SkelP|)).
+        # Reason: the original needed the two 1-voxel-wide skeletons to overlap voxel for voxel, so a
+        #         one-voxel shift scored ~0. The standard version checks each skeleton against the other
+        #         volume. It is the metric the paper cites, but it is more forgiving, so old and new
+        #         clDice numbers are not comparable.
         # Topology Precision: fraction of prediction's skeleton inside GT volume
         tprec = np.sum(output_skel & label_bin) / np.sum(output_skel)
         
@@ -185,63 +216,59 @@ def compute_cldice(
         if tprec + tsens == 0:
             return 0.0
         return 2.0 * tprec * tsens / (tprec + tsens)
-    except:
+    except:  # [ORIGINAL] kept. Reason: not part of this investigation. Caution: it hides real errors as a 0.0 score.
         return 0.0
 
 
-def compute_reconstruction_error(
-    label: np.ndarray, 
-    output: np.ndarray,
-    threshold: float = 0.5
-) -> float:
-    """
-    Computes reconstruction error (L1 norm) over the vessel region.
-    
-    Computed only over the union of foreground voxels to avoid
-    the metric being dominated by the vast empty background.
-    """
-    label_bin = (label >= threshold).astype(np.uint8)
-    output_bin = (output >= threshold).astype(np.uint8)
-    
-    # Union of foreground regions
-    roi_mask = (label_bin | output_bin).astype(bool)
-    
-    if np.sum(roi_mask) == 0:
-        return 0.0
-    
-    return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
+# [ORIGINAL] Whole-volume mean L1 error, exactly as in eval_orig.py.
+# Reason: restored to the original definition. Caution: most of the volume is empty background, so the
+#         values are tiny (~1e-3) and will not match the paper's ~0.1 scale. If you need that scale,
+#         use the region-only alternative commented out below and state it in your write-up.
+def compute_reconstruction_error(label: np.ndarray, output: np.ndarray) -> float:
+    """Computes reconstruction error (L1 norm) between volumes."""
+    return np.mean(np.abs(label - output))
 
 
-def compute_remse(
-    label: np.ndarray, 
-    output: np.ndarray,
-    threshold: float = 0.5
-) -> float:
-    """
-    Computes region-based mean squared error (reMSE) over the vessel region.
-    
-    Returns MSE (not RMSE) over the union of foreground voxels,
-    matching the paper convention (reported as ×10⁻⁴).
-    """
-    label_bin = (label >= threshold).astype(np.uint8)
-    output_bin = (output >= threshold).astype(np.uint8)
-    
-    # Union of foreground regions
-    roi_mask = (label_bin | output_bin).astype(bool)
-    
-    if np.sum(roi_mask) == 0:
-        return 0.0
-    
-    return np.mean((label[roi_mask] - output[roi_mask]) ** 2)
+# [EDIT, disabled alternative] Region-only reError (union of foreground voxels).
+# Reason: avoids the background dominating the mean, which gives values near the paper's scale.
+# def compute_reconstruction_error(
+#     label: np.ndarray,
+#     output: np.ndarray,
+#     threshold: float = 0.5
+# ) -> float:
+#     label_bin = (label >= threshold).astype(np.uint8)
+#     output_bin = (output >= threshold).astype(np.uint8)
+#     roi_mask = (label_bin | output_bin).astype(bool)  # union of foreground regions
+#     if np.sum(roi_mask) == 0:
+#         return 0.0
+#     return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
+
+
+# [EDIT] Plain MSE (no sqrt). eval_orig.py returned np.sqrt(np.mean(...)), i.e. RMSE.
+# Reason: the paper reports reMSE in units of 1e-4, which is a plain-MSE scale (NeCA reports ~2.7e-4 for
+#         RCA). RMSE values are not comparable. Still computed over the whole volume, as in the original.
+def compute_remse(label: np.ndarray, output: np.ndarray) -> float:
+    """Computes voxel-wise mean squared error (reMSE), not root."""
+    return np.mean((label - output) ** 2)
+
+
+# [EDIT, disabled alternative] Region-only reMSE (union of foreground voxels).
+# Reason: same idea as the region-only reError above. Not used by default.
+# def compute_remse(label, output, threshold=0.5):
+#     roi_mask = ((label >= threshold) | (output >= threshold))
+#     if np.sum(roi_mask) == 0:
+#         return 0.0
+#     return np.mean((label[roi_mask] - output[roi_mask]) ** 2)
 
 
 def compute_all_metrics(
     label: np.ndarray,
     output: np.ndarray,
-    voxel_spacing: tuple = (0.8, 0.8, 0.8),
-    threshold_label: float = 0.5,
-    threshold_output: float = 0.5,
-    apply_rotation: bool = True
+    voxel_spacing: tuple = (0.8, 0.8, 0.8),  # [ORIGINAL] kept. Reason: not changed in this investigation (scales Chamfer distance and volumes).
+    threshold_label: float = 0.5,   # [EDIT] was 0.8 in eval_orig.py. Reason: NeCA binarises the occupancy at 0.5 (final output is a sigmoid).
+    threshold_output: float = 0.5,  # [EDIT] was 0.8 in eval_orig.py. Reason: same as above. This raises Dice, IoU, clDice and changes CD.
+    apply_rotation: bool = True,
+    min_component_voxels: int = 25  # [EDIT] new argument. Reason: NeCA's cleanup of fragments < 25 voxels (0 turns it off).
 ) -> dict:
     """
     Compute all evaluation metrics for a pair of volumes.
@@ -259,7 +286,12 @@ def compute_all_metrics(
     """
     # Apply rotation if needed (for alignment)
     if apply_rotation:
-        output = ndimage.rotate(output, angle=-90, axes=(2, 1), reshape=True, order=0)
+        output = ndimage.rotate(output, angle=-90, axes=(2, 1), reshape=True, order=0)  # [ORIGINAL] kept. Reason: aligns the prediction orientation with the ground truth.
+    
+    # [EDIT] Remove tiny disconnected fragments from the prediction before computing any metric.
+    # Reason: NeCA's evaluation protocol (paper Sec. 2.5) does this with a 25-voxel limit; eval_orig.py did not.
+    if min_component_voxels > 0:
+        output = remove_small_components(output, threshold_output, min_component_voxels)
     
     # Compute all metrics
     metrics = {}
@@ -326,9 +358,10 @@ def evaluate_single_model(
     gt_volume_path: str,
     recon_volume_path: str,
     voxel_spacing: tuple = (0.8, 0.8, 0.8),
-    threshold_label: float = 0.5,
-    threshold_output: float = 0.5,
-    apply_rotation: bool = True
+    threshold_label: float = 0.5,   # [EDIT] was 0.8. Reason: NeCA binarises at 0.5 (see compute_all_metrics).
+    threshold_output: float = 0.5,  # [EDIT] was 0.8. Reason: same as above.
+    apply_rotation: bool = True,
+    min_component_voxels: int = 25  # [EDIT] new argument, passed to compute_all_metrics.
 ) -> dict:
     """
     Evaluate a single model by comparing ground truth and reconstruction.
@@ -368,7 +401,8 @@ def evaluate_single_model(
             voxel_spacing=voxel_spacing,
             threshold_label=threshold_label,
             threshold_output=threshold_output,
-            apply_rotation=apply_rotation
+            apply_rotation=apply_rotation,
+            min_component_voxels=min_component_voxels  # [EDIT] new argument, see compute_all_metrics.
         )
         
         # Add metadata
@@ -413,10 +447,11 @@ def batch_evaluate_models(
     config_path: str = "./config/CCTA.yaml",
     model_numbers: list = None,
     voxel_spacing: tuple = (0.8, 0.8, 0.8),
-    threshold_label: float = 0.5,
-    threshold_output: float = 0.5,
+    threshold_label: float = 0.5,   # [EDIT] was 0.8. Reason: NeCA binarises at 0.5 (see compute_all_metrics).
+    threshold_output: float = 0.5,  # [EDIT] was 0.8. Reason: same as above.
     apply_rotation: bool = True,
-    output_dir: str = "./logs/evaluation/"
+    output_dir: str = "./logs/evaluation/",
+    min_component_voxels: int = 25  # [EDIT] new argument, passed down to compute_all_metrics.
 ) -> pd.DataFrame:
     """
     Batch evaluate multiple models and save comprehensive results.
@@ -501,7 +536,8 @@ def batch_evaluate_models(
             voxel_spacing=voxel_spacing,
             threshold_label=threshold_label,
             threshold_output=threshold_output,
-            apply_rotation=apply_rotation
+            apply_rotation=apply_rotation,
+            min_component_voxels=min_component_voxels  # [EDIT] new argument, see compute_all_metrics.
         )
         
         # Add experiment metadata (parse from experiment name if possible)
@@ -561,7 +597,8 @@ def batch_evaluate_models(
                 'voxel_spacing': voxel_spacing,
                 'threshold_label': threshold_label,
                 'threshold_output': threshold_output,
-                'apply_rotation': apply_rotation
+                'apply_rotation': apply_rotation,
+                'min_component_voxels': min_component_voxels  # [EDIT] logged so each run records the cleanup setting.
             },
             'statistics': {
                 'dice_mean': float(successful_results['dice'].mean()),
@@ -622,10 +659,14 @@ def main():
                        help="Evaluate only a single model")
     parser.add_argument("--output-dir", default="./logs/evaluation/",
                        help="Directory to save evaluation results")
+    # [EDIT] Both threshold defaults changed from 0.8 to 0.5. Reason: NeCA binarises at 0.5 (see compute_all_metrics).
     parser.add_argument("--threshold-gt", type=float, default=0.5,
                        help="Binarization threshold for ground truth")
     parser.add_argument("--threshold-pred", type=float, default=0.5,
                        help="Binarization threshold for predictions")
+    # [EDIT] New option. Reason: lets you switch NeCA's small-fragment cleanup off (0) to see its effect.
+    parser.add_argument("--min-component-voxels", type=int, default=25,
+                       help="Remove predicted components smaller than this many voxels (0 = off)")
     parser.add_argument("--no-rotation", action='store_true',
                        help="Skip rotation alignment")
     parser.add_argument("--voxel-spacing", nargs=3, type=float, default=[0.8, 0.8, 0.8],
@@ -645,7 +686,8 @@ def main():
         threshold_label=args.threshold_gt,
         threshold_output=args.threshold_pred,
         apply_rotation=not args.no_rotation,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        min_component_voxels=args.min_component_voxels  # [EDIT] new argument, see compute_all_metrics.
     )
     
     return results_df
