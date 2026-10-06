@@ -220,28 +220,31 @@ def compute_cldice(
         return 0.0
 
 
-# [ORIGINAL] Whole-volume mean L1 error, exactly as in eval_orig.py.
-# Reason: restored to the original definition. Caution: most of the volume is empty background, so the
-#         values are tiny (~1e-3) and will not match the paper's ~0.1 scale. If you need that scale,
-#         use the region-only alternative commented out below and state it in your write-up.
-def compute_reconstruction_error(label: np.ndarray, output: np.ndarray) -> float:
-    """Computes reconstruction error (L1 norm) between volumes."""
-    return np.mean(np.abs(label - output))
+# [EDIT] Region-only reError: mean absolute error over the union of foreground voxels (label or prediction >= threshold).
+# eval_orig.py averaged over the whole volume instead (np.mean(np.abs(label - output))).
+# Reason: whole-volume averaging is dominated by empty background and gives ~1e-4, which cannot match the paper's
+#         reError (~0.12). It also cannot be the paper's definition if reMSE is whole-volume, because the mean
+#         absolute error cannot exceed the RMSE on the same voxels (reMSE 1e-4 -> RMSE ~0.01). The paper does
+#         not define reError, so state this choice in your write-up.
+def compute_reconstruction_error(
+    label: np.ndarray,
+    output: np.ndarray,
+    threshold: float = 0.5
+) -> float:
+    """Computes reconstruction error (L1 norm) over the vessel region (union of foreground voxels)."""
+    label_bin = (label >= threshold).astype(np.uint8)
+    output_bin = (output >= threshold).astype(np.uint8)
+    roi_mask = (label_bin | output_bin).astype(bool)  # union of foreground regions
+    if np.sum(roi_mask) == 0:
+        return 0.0
+    return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
 
 
-# [EDIT, disabled alternative] Region-only reError (union of foreground voxels).
-# Reason: avoids the background dominating the mean, which gives values near the paper's scale.
-# def compute_reconstruction_error(
-#     label: np.ndarray,
-#     output: np.ndarray,
-#     threshold: float = 0.5
-# ) -> float:
-#     label_bin = (label >= threshold).astype(np.uint8)
-#     output_bin = (output >= threshold).astype(np.uint8)
-#     roi_mask = (label_bin | output_bin).astype(bool)  # union of foreground regions
-#     if np.sum(roi_mask) == 0:
-#         return 0.0
-#     return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
+# [ORIGINAL, disabled alternative] Whole-volume mean L1 error, exactly as in eval_orig.py.
+# Reason: kept for comparison. Values are ~1e-4 because most of the volume is empty background.
+# def compute_reconstruction_error(label: np.ndarray, output: np.ndarray) -> float:
+#     """Computes reconstruction error (L1 norm) between volumes."""
+#     return np.mean(np.abs(label - output))
 
 
 # [EDIT] Plain MSE (no sqrt). eval_orig.py returned np.sqrt(np.mean(...)), i.e. RMSE.
@@ -637,9 +640,9 @@ def batch_evaluate_models(
         print(f"clDice (%):       {successful_results['cldice'].mean()*100:.2f} ± {successful_results['cldice'].std()*100:.2f}")
         print(f"Dice (%):         {successful_results['dice'].mean()*100:.2f} ± {successful_results['dice'].std()*100:.2f}")
         print(f"IoU (%):          {successful_results['iou'].mean()*100:.2f} ± {successful_results['iou'].std()*100:.2f}")
-        print(f"Recon Error:      {successful_results['reconstruction_error'].mean():.4f} ± {successful_results['reconstruction_error'].std():.4f}")
-        print(f"Chamfer Dist (mm):       {successful_results['chamfer_distance'].mean():.2f} ± {successful_results['chamfer_distance'].std():.2f}")
-        print(f"reMSE (×1e-4):    {successful_results['remse'].mean()*1e4:.2f} ± {successful_results['remse'].std()*1e4:.2f}")
+        print(f"reError:          {successful_results['reconstruction_error'].mean():.2f} ± {successful_results['reconstruction_error'].std():.2f}")
+        print(f"CD_l2 (mm):       {successful_results['chamfer_distance'].mean():.2f} ± {successful_results['chamfer_distance'].std():.2f}")
+        print(f"reMSE:            {successful_results['remse'].mean():.4f} ± {successful_results['remse'].std():.4f}")
     
     if failed_evaluations > 0:
         print(f"\n❌ Failed models: {df_results[~df_results['evaluation_success']]['model_id'].tolist()}")
