@@ -220,39 +220,14 @@ def compute_cldice(
         return 0.0
 
 
-# [EDIT] Region-only reError: mean absolute error over the union of foreground voxels (label or prediction >= threshold).
-# eval_orig.py averaged over the whole volume instead (np.mean(np.abs(label - output))).
-# Reason: whole-volume averaging is dominated by empty background and gives ~1e-4, which cannot match the paper's
-#         reError (~0.12). It also cannot be the paper's definition if reMSE is whole-volume, because the mean
-#         absolute error cannot exceed the RMSE on the same voxels (reMSE 1e-4 -> RMSE ~0.01). The paper does
-#         not define reError, so state this choice in your write-up.
-def compute_reconstruction_error(
-    label: np.ndarray,
-    output: np.ndarray,
-    threshold: float = 0.5
-) -> float:
-    """Computes reconstruction error (L1 norm) over the vessel region (union of foreground voxels)."""
-    label_bin = (label >= threshold).astype(np.uint8)
-    output_bin = (output >= threshold).astype(np.uint8)
-    roi_mask = (label_bin | output_bin).astype(bool)  # union of foreground regions
-    if np.sum(roi_mask) == 0:
-        return 0.0
-    return np.mean(np.abs(label[roi_mask] - output[roi_mask]))
+def compute_reconstruction_error(label: np.ndarray, output: np.ndarray) -> float:
+    """Computes reconstruction error (L1 norm) between volumes."""
+    return np.mean(np.abs(label - output))
 
 
-# [ORIGINAL, disabled alternative] Whole-volume mean L1 error, exactly as in eval_orig.py.
-# Reason: kept for comparison. Values are ~1e-4 because most of the volume is empty background.
-# def compute_reconstruction_error(label: np.ndarray, output: np.ndarray) -> float:
-#     """Computes reconstruction error (L1 norm) between volumes."""
-#     return np.mean(np.abs(label - output))
-
-
-# [EDIT] Plain MSE (no sqrt). eval_orig.py returned np.sqrt(np.mean(...)), i.e. RMSE.
-# Reason: the paper reports reMSE in units of 1e-4, which is a plain-MSE scale (NeCA reports ~2.7e-4 for
-#         RCA). RMSE values are not comparable. Still computed over the whole volume, as in the original.
 def compute_remse(label: np.ndarray, output: np.ndarray) -> float:
-    """Computes voxel-wise mean squared error (reMSE), not root."""
-    return np.mean((label - output) ** 2)
+    """Computes voxel-wise root mean squared error (reMSE)."""
+    return np.sqrt(np.mean((label - output) ** 2))
 
 
 # [EDIT, disabled alternative] Region-only reMSE (union of foreground voxels).
