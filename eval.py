@@ -156,7 +156,7 @@ def compute_iou(
 def remove_small_components(
     output: np.ndarray,
     threshold: float = 0.5,
-    min_voxels: int = 25
+    min_voxels: int = 0
 ) -> np.ndarray:
     """Zeroes predicted foreground components smaller than min_voxels (full connectivity)."""
     mask = output >= threshold
